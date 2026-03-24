@@ -63,12 +63,11 @@
 ## Installation
 
 ```bash
-# Clone this repository
-git clone https://github.com/warhammer50K/sam2-oakd-realtime.git
+# Clone this repository (--recursive pulls the SAM 2 submodule automatically)
+git clone --recursive https://github.com/warhammer50K/sam2-oakd-realtime.git
 cd sam2-oakd-realtime
 
-# Clone SAM 2 into the project
-git clone https://github.com/facebookresearch/sam2.git sam2_repo
+# Install SAM 2 in editable mode
 cd sam2_repo && pip install -e . && cd ..
 
 # Install dependencies
@@ -79,6 +78,11 @@ cd sam2_repo/checkpoints
 bash download_ckpts.sh
 cd ../..
 ```
+
+> **Already cloned without `--recursive`?** Run:
+> ```bash
+> git submodule update --init --recursive
+> ```
 
 ## Usage
 
@@ -108,7 +112,7 @@ python benchmark_fps.py --fp16 --camera
 ├── app.py              # Main FastAPI web application (Image/Video/Streaming modes)
 ├── benchmark_fps.py    # FPS benchmark script for SAM2 inference
 ├── requirements.txt    # Python dependencies
-└── sam2_repo/          # Meta SAM 2 repository (cloned separately)
+└── sam2_repo/          # Meta SAM 2 (git submodule → facebookresearch/sam2)
     └── checkpoints/    # Model weights (downloaded separately)
 ```
 
