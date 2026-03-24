@@ -1,8 +1,8 @@
 """
 OAK-D Lite + SAM2 Real-time Segmentation Web App
-- Image Mode: 실시간 포인트 세그멘테이션
-- Video Mode: 녹화 → 클릭 → 자동 추적 재생
-- Streaming Mode: 클릭 한번 → 실시간 카메라 스트림에서 자동 추적
+- Image Mode: Real-time point-based segmentation
+- Video Mode: Record → Click → Automatic tracking playback
+- Streaming Mode: Click once → Automatic tracking on live camera stream
 """
 
 import asyncio
@@ -26,13 +26,13 @@ from fastapi.responses import HTMLResponse
 from sam2.build_sam import build_sam2, build_sam2_video_predictor
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 
-# ── 설정 ──
+# ── Config ──
 SAM2_CHECKPOINT = "sam2_repo/checkpoints/sam2.1_hiera_tiny.pt"
 SAM2_CONFIG = "configs/sam2.1/sam2.1_hiera_t.yaml"
 CAM_WIDTH, CAM_HEIGHT = 640, 480
 MASK_ALPHA = 0.55
 
-# 모델 variant 매핑
+# Model variant mapping
 _CFG_TO_VARIANT = {
     "sam2.1_hiera_t": "SAM2.1 Tiny",
     "sam2.1_hiera_s": "SAM2.1 Small",
@@ -44,14 +44,14 @@ MODEL_VARIANT = _CFG_TO_VARIANT.get(_cfg_stem, _cfg_stem)
 
 
 def gpu_status_text() -> str:
-    """GPU VRAM 사용량 문자열 반환"""
+    """Return GPU VRAM usage as a string"""
     if not torch.cuda.is_available():
         return "CPU"
     mem_used = torch.cuda.memory_allocated() / 1e9
     mem_total = torch.cuda.get_device_properties(0).total_memory / 1e9
     return f"VRAM {mem_used:.1f}/{mem_total:.0f}G"
 
-# 오브젝트별 색상 (BGR)
+# Per-object colors (BGR)
 OBJ_COLORS = [
     (0, 120, 255),   # orange
     (255, 50, 50),    # blue
@@ -63,7 +63,7 @@ OBJ_COLORS = [
 
 
 def overlay_masks_on_frame(frame, masks_dict, points_list=None):
-    """마스크와 포인트를 프레임 위에 오버레이"""
+    """Overlay masks and points onto a frame"""
     overlay = frame.copy()
     for obj_id, mask in masks_dict.items():
         color = OBJ_COLORS[obj_id % len(OBJ_COLORS)]
@@ -99,7 +99,7 @@ class ImageEngine:
         self.running = False
 
     def start(self, cam_queue):
-        print("[Image] 모델 로딩...")
+        print("[Image] Loading model...")
         model = build_sam2(SAM2_CONFIG, SAM2_CHECKPOINT, device="cuda")
         self.predictor = SAM2ImagePredictor(model)
         self.cam_queue = cam_queue
@@ -182,7 +182,7 @@ class VideoEngine:
 
     def start(self, predictor):
         self.predictor = predictor
-        print("[Video] 준비됨")
+        print("[Video] Ready")
 
     def stop(self):
         self._cleanup_tmp()
@@ -199,7 +199,7 @@ class VideoEngine:
         self.annotations.clear()
         self.next_obj_id = 1
         self.playback_idx = 0
-        print(f"[Video] 녹화 시작 ({duration}초)...")
+        print(f"[Video] Recording started ({duration}s)...")
         t0 = time.perf_counter()
         while time.perf_counter() - t0 < duration:
             in_frame = cam_queue.tryGet()
@@ -209,7 +209,7 @@ class VideoEngine:
             self.frames.append(in_frame.getCvFrame())
         actual_fps = len(self.frames) / (time.perf_counter() - t0)
         self.record_fps = actual_fps
-        print(f"[Video] 녹화 완료: {len(self.frames)} frames ({actual_fps:.1f} fps)")
+        print(f"[Video] Recording done: {len(self.frames)} frames ({actual_fps:.1f} fps)")
         self._cleanup_tmp()
         self.tmp_dir = tempfile.mkdtemp(prefix="sam2_video_")
         for i, frame in enumerate(self.frames):
@@ -230,7 +230,7 @@ class VideoEngine:
         if not self.frames or not self.annotations:
             return
         self.state = "tracking"
-        print(f"[Video] 추적 시작: {len(self.annotations)} annotations, {len(self.frames)} frames")
+        print(f"[Video] Tracking started: {len(self.annotations)} annotations, {len(self.frames)} frames")
         with torch.autocast("cuda", dtype=torch.float16):
             inference_state = self.predictor.init_state(video_path=self.tmp_dir)
             obj_points = {}
@@ -266,7 +266,7 @@ class VideoEngine:
             self.predictor.reset_state(inference_state)
         self.playback_idx = 0
         self.state = "done"
-        print("[Video] 추적 완료")
+        print("[Video] Tracking done")
 
     def get_frame_jpeg(self, quality=80):
         frame = None
@@ -306,14 +306,14 @@ class VideoEngine:
 
 
 # ────────────────────────────────────────────
-# Streaming Mode Engine (실시간 비디오 추적)
+# Streaming Mode Engine (real-time video tracking)
 # ────────────────────────────────────────────
 class StreamingEngine:
     """
-    SAM2 VideoPredictor를 해킹하여 실시간 스트리밍 추적 구현.
-    - 초기 시드 프레임으로 init_state 구성
-    - 첫 프레임에 클릭으로 물체 지정
-    - 이후 카메라 프레임을 동적으로 inference_state에 추가하며 추적
+    Real-time streaming tracker built on SAM2 VideoPredictor.
+    - Builds inference_state from initial seed frames
+    - Objects are designated by clicking on the first frame
+    - Subsequent camera frames are dynamically injected into inference_state for tracking
     """
 
     IMG_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
@@ -330,17 +330,17 @@ class StreamingEngine:
         self.fps = 0.0
         self.frame_idx = 0
         self.running = False
-        self.first_frame = None  # 첫 프레임 (어노테이션용)
+        self.first_frame = None  # First frame (for annotation)
 
     def start(self, predictor):
         self.predictor = predictor
-        print("[Streaming] 준비됨")
+        print("[Streaming] Ready")
 
     def stop(self):
         self.running = False
 
     def _preprocess_frame(self, frame_bgr):
-        """BGR OpenCV 프레임 → SAM2 전처리 텐서"""
+        """BGR OpenCV frame -> SAM2 preprocessed tensor"""
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         img_pil = PILImage.fromarray(frame_rgb)
         img_resized = img_pil.resize(
@@ -352,10 +352,10 @@ class StreamingEngine:
         return img_tensor
 
     def _build_initial_state(self, seed_frames):
-        """시드 프레임들로 inference_state 수동 구성"""
+        """Manually build inference_state from seed frames"""
         device = self.predictor.device
 
-        # 프레임 전처리
+        # Preprocess frames
         images = {}
         for i, frame in enumerate(seed_frames):
             img_tensor = self._preprocess_frame(frame).to(device)
@@ -381,13 +381,13 @@ class StreamingEngine:
         inference_state["temp_output_dict_per_obj"] = {}
         inference_state["frames_tracked_per_obj"] = {}
 
-        # 첫 프레임 backbone 워밍업
+        # Warm up backbone on the first frame
         self.predictor._get_image_feature(inference_state, frame_idx=0, batch_size=1)
 
         return inference_state
 
     def _add_frame_to_state(self, frame_bgr):
-        """새 카메라 프레임을 inference_state에 동적 추가"""
+        """Dynamically add a new camera frame to inference_state"""
         img_tensor = self._preprocess_frame(frame_bgr)
         if not self.inference_state["offload_video_to_cpu"]:
             img_tensor = img_tensor.to(self.inference_state["device"])
@@ -397,7 +397,7 @@ class StreamingEngine:
         return idx
 
     def _track_frame(self, frame_idx):
-        """단일 프레임에 대해 추적 실행, 마스크 반환"""
+        """Run tracking on a single frame and return masks"""
         batch_size = self.predictor._get_obj_num(self.inference_state)
         if batch_size == 0:
             return {}
@@ -431,7 +431,7 @@ class StreamingEngine:
         return masks_dict
 
     def begin_preview(self, cam_queue):
-        """프리뷰 시작 - 첫 프레임 캡처 대기"""
+        """Start preview - wait for first frame capture"""
         self.state = "preview"
         self.annotations.clear()
         self.next_obj_id = 1
@@ -439,8 +439,8 @@ class StreamingEngine:
         self.first_frame = None
         self.current_overlay = None
 
-        # 첫 프레임 캡처
-        print("[Streaming] 프리뷰 프레임 캡처 중...")
+        # Capture first frame
+        print("[Streaming] Capturing preview frame...")
         while True:
             in_frame = cam_queue.tryGet()
             if in_frame is not None:
@@ -448,12 +448,12 @@ class StreamingEngine:
                 break
             time.sleep(0.001)
 
-        # 시드 프레임으로 state 구성 (첫 프레임 1개)
+        # Build state from seed frame (single frame)
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
             self.inference_state = self._build_initial_state([self.first_frame])
 
         self.state = "annotating"
-        print("[Streaming] 어노테이션 대기 중 (클릭하세요)")
+        print("[Streaming] Waiting for annotations (click to annotate)")
 
     def add_annotation(self, obj_id, x, y, label=1):
         with self.lock:
@@ -465,14 +465,14 @@ class StreamingEngine:
         return oid
 
     def start_tracking(self, cam_queue):
-        """어노테이션 확정 후 실시간 추적 시작"""
+        """Start real-time tracking after annotations are confirmed"""
         if not self.annotations or self.inference_state is None:
             return
 
         self.state = "tracking"
         self.running = True
 
-        # 어노테이션을 frame 0에 추가
+        # Add annotations to frame 0
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
             obj_points = {}
             for obj_id, x, y, label in self.annotations:
@@ -490,7 +490,7 @@ class StreamingEngine:
                     labels=np.array(data["labels"], dtype=np.int32),
                 )
 
-            # preflight: 메모리 인코더 실행
+            # Preflight: run memory encoder
             self.predictor.propagate_in_video_preflight(self.inference_state)
 
         self.frame_idx = 0
@@ -498,14 +498,14 @@ class StreamingEngine:
             target=self._tracking_loop, args=(cam_queue,), daemon=True
         )
         self._thread.start()
-        print(f"[Streaming] 실시간 추적 시작 ({len(obj_points)} objects)")
+        print(f"[Streaming] Real-time tracking started ({len(obj_points)} objects)")
 
     def _tracking_loop(self, cam_queue):
-        """실시간 카메라 프레임을 추적하는 메인 루프"""
+        """Main loop for tracking live camera frames"""
         frame_times = []
         MAX_MEMORY_FRAMES = 60
 
-        print("[Streaming] tracking loop 시작")
+        print("[Streaming] Tracking loop started")
         while self.running:
             in_frame = cam_queue.tryGet()
             if in_frame is None:
@@ -527,7 +527,7 @@ class StreamingEngine:
                             obj_out = self.inference_state["output_dict_per_obj"][obj_idx]
                             obj_out["non_cond_frame_outputs"].pop(old_idx, None)
             except Exception as e:
-                print(f"[Streaming] 추적 에러: {e}")
+                print(f"[Streaming] Tracking error: {e}")
                 masks_dict = {}
 
             overlay = overlay_masks_on_frame(frame, masks_dict)
@@ -570,7 +570,7 @@ class StreamingEngine:
         time.sleep(0.05)
         with self.lock:
             if self.inference_state is not None:
-                # GPU 메모리 해제
+                # Release GPU memory
                 self.inference_state["images"].clear()
                 self.inference_state["cached_features"].clear()
                 for obj_idx in list(self.inference_state["output_dict_per_obj"].keys()):
@@ -601,14 +601,14 @@ class CameraManager:
         out = cam.requestOutput((CAM_WIDTH, CAM_HEIGHT), dai.ImgFrame.Type.BGR888p)
         self.queue = out.createOutputQueue()
         self.pipeline.start()
-        print("[Camera] OAK-D Lite 연결됨")
+        print("[Camera] OAK-D Lite connected")
 
     def stop(self):
         if self.pipeline:
             self.pipeline.stop()
 
 
-# ── 전역 인스턴스 ──
+# ── Global instances ──
 camera = CameraManager()
 image_engine = ImageEngine()
 video_engine = VideoEngine()
@@ -620,8 +620,8 @@ current_mode = {"mode": "image"}
 async def lifespan(app: FastAPI):
     camera.start()
     image_engine.start(camera.queue)
-    # Video와 Streaming은 같은 predictor 공유
-    print("[Video/Streaming] 모델 로딩...")
+    # Video and Streaming share the same predictor
+    print("[Video/Streaming] Loading model...")
     video_predictor = build_sam2_video_predictor(SAM2_CONFIG, SAM2_CHECKPOINT, device="cuda")
     video_engine.start(video_predictor)
     streaming_engine.start(video_predictor)
@@ -639,7 +639,7 @@ app = FastAPI(lifespan=lifespan)
 # HTML
 # ────────────────────────────────────────────
 HTML_PAGE = """<!DOCTYPE html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -915,7 +915,7 @@ async def websocket_endpoint(ws: WebSocket):
             msg = json.loads(data)
             action = msg.get("action")
 
-            # ── 모드 전환 ──
+            # ── Mode switch ──
             if action == "switch_mode":
                 current_mode["mode"] = msg["mode"]
                 if msg["mode"] == "video":
@@ -968,10 +968,10 @@ async def websocket_endpoint(ws: WebSocket):
                 async def do_capture():
                     await send_state("stream_state", "preview")
                     loop = asyncio.get_event_loop()
-                    # image engine 정지 (카메라 큐 독점 방지)
+                    # Stop image engine (prevent camera queue contention)
                     image_engine.running = False
                     time.sleep(0.05)
-                    # 큐에 쌓인 프레임 비우기
+                    # Flush queued frames
                     while camera.queue.tryGet() is not None:
                         pass
                     await loop.run_in_executor(None, streaming_engine.begin_preview, camera.queue)
@@ -990,13 +990,13 @@ async def websocket_endpoint(ws: WebSocket):
                 async def do_stream():
                     await send_state("stream_state", "tracking")
                     loop = asyncio.get_event_loop()
-                    # image engine이 확실히 멈춰있는지 확인
+                    # Ensure image engine is stopped
                     image_engine.running = False
                     await loop.run_in_executor(None, streaming_engine.start_tracking, camera.queue)
                 asyncio.create_task(do_stream())
             elif action == "stream_reset":
                 streaming_engine.reset()
-                # image engine 재시작
+                # Restart image engine
                 if not image_engine.running:
                     image_engine.running = True
                     image_engine._thread = threading.Thread(target=image_engine._loop, daemon=True)

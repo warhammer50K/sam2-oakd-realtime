@@ -1,7 +1,7 @@
 """
 SAM2 FPS Benchmark Script
-- RTX 4050 Laptop GPU 에서 SAM2.1 Tiny 모델의 FPS 측정
-- OAK-D Lite 카메라 또는 더미 이미지로 테스트 가능
+- Measure SAM2.1 Tiny model FPS on RTX 4050 Laptop GPU
+- Test with OAK-D Lite camera or dummy images
 """
 
 import time
@@ -13,12 +13,12 @@ from contextlib import nullcontext
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 
-# ── 경로 설정 ──
+# ── Path config ──
 SAM2_REPO = "sam2_repo"
 CHECKPOINT = f"{SAM2_REPO}/checkpoints/sam2.1_hiera_tiny.pt"
 MODEL_CFG = "configs/sam2.1/sam2.1_hiera_t.yaml"
 
-# ── 벤치마크 해상도 (OAK-D Lite 기본 RGB: 1920x1080, 4K: 3840x2160) ──
+# ── Benchmark resolutions (OAK-D Lite default RGB: 1920x1080, 4K: 3840x2160) ──
 RESOLUTIONS = [
     (640, 480, "VGA"),
     (1280, 720, "720p"),
@@ -33,7 +33,7 @@ def build_predictor(device: str, use_fp16: bool):
 
 
 def benchmark_image_encoder(predictor, image, use_fp16, n_warmup=5, n_iter=50):
-    """이미지 인코더만 측정 (set_image)"""
+    """Benchmark image encoder only (set_image)"""
     ctx = torch.autocast("cuda", dtype=torch.float16) if use_fp16 else nullcontext()
     with ctx:
         for _ in range(n_warmup):
@@ -49,7 +49,7 @@ def benchmark_image_encoder(predictor, image, use_fp16, n_warmup=5, n_iter=50):
 
 
 def benchmark_predict(predictor, image, use_fp16, n_warmup=5, n_iter=50):
-    """predict (디코더) 만 측정 - 중앙 포인트 1개 프롬프트"""
+    """Benchmark decoder only (predict) - single center point prompt"""
     ctx = torch.autocast("cuda", dtype=torch.float16) if use_fp16 else nullcontext()
     with ctx:
         predictor.set_image(image)
@@ -70,7 +70,7 @@ def benchmark_predict(predictor, image, use_fp16, n_warmup=5, n_iter=50):
 
 
 def benchmark_full_pipeline(predictor, image, use_fp16, n_warmup=3, n_iter=30):
-    """set_image + predict 전체 파이프라인 측정"""
+    """Benchmark full pipeline (set_image + predict)"""
     ctx = torch.autocast("cuda", dtype=torch.float16) if use_fp16 else nullcontext()
     h, w = image.shape[:2]
     point = np.array([[w // 2, h // 2]])
@@ -92,7 +92,7 @@ def benchmark_full_pipeline(predictor, image, use_fp16, n_warmup=3, n_iter=30):
 
 
 def benchmark_with_camera(predictor, duration=10):
-    """OAK-D Lite 카메라로 실시간 FPS 측정"""
+    """Measure real-time FPS with OAK-D Lite camera"""
     import depthai as dai
 
     pipeline = dai.Pipeline()
@@ -112,7 +112,7 @@ def benchmark_with_camera(predictor, duration=10):
 
     with dai.Device(pipeline) as device:
         q = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
-        print(f"\n  OAK-D Lite 카메라 실시간 벤치마크 ({duration}초)...")
+        print(f"\n  OAK-D Lite camera real-time benchmark ({duration}s)...")
 
         # warmup
         for _ in range(5):
@@ -131,14 +131,14 @@ def benchmark_with_camera(predictor, duration=10):
         torch.cuda.synchronize()
         elapsed = time.perf_counter() - t0
         fps = frame_count / elapsed
-        print(f"  카메라 실시간 파이프라인: {fps:.1f} FPS ({frame_count} frames / {elapsed:.1f}s)")
+        print(f"  Camera real-time pipeline: {fps:.1f} FPS ({frame_count} frames / {elapsed:.1f}s)")
         return fps
 
 
 def main():
     parser = argparse.ArgumentParser(description="SAM2 FPS Benchmark")
-    parser.add_argument("--camera", action="store_true", help="OAK-D Lite 카메라로 실시간 테스트")
-    parser.add_argument("--fp16", action="store_true", help="FP16 (half precision) 사용")
+    parser.add_argument("--camera", action="store_true", help="Real-time test with OAK-D Lite camera")
+    parser.add_argument("--fp16", action="store_true", help="Use FP16 (half precision)")
     parser.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
     args = parser.parse_args()
 
@@ -153,7 +153,7 @@ def main():
 
     predictor = build_predictor(args.device, args.fp16)
 
-    # 더미 이미지 벤치마크
+    # Dummy image benchmark
     for w, h, name in RESOLUTIONS:
         image = np.random.randint(0, 255, (h, w, 3), dtype=np.uint8)
         print(f"\n── {name} ({w}x{h}) ──")
@@ -167,16 +167,16 @@ def main():
         full_fps = benchmark_full_pipeline(predictor, image, args.fp16)
         print(f"  Full Pipeline:              {full_fps:.1f} FPS")
 
-    # VRAM 사용량
+    # VRAM usage
     if args.device == "cuda":
         print(f"\n  Peak VRAM usage: {torch.cuda.max_memory_allocated() / 1e9:.2f} GB")
 
-    # 카메라 벤치마크
+    # Camera benchmark
     if args.camera:
         benchmark_with_camera(predictor)
 
     print("\n" + "=" * 60)
-    print("벤치마크 완료")
+    print("Benchmark complete")
     print("=" * 60)
 
 
