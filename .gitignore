@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg*
+build/
+dist/
+.venv/
+venv/
+
+# SAM2 checkpoints (large files)
+sam2_repo/checkpoints/*.pt
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+outputs/
+_C.*
+*-checkpoint.ipynb
+*.log
